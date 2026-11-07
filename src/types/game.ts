@@ -157,3 +157,42 @@ export interface FloatingNumber {
   x: number;
   y: number;
 }
+
+// 關卡結算與傷害來源統計結構
+export type DamageSourceCategory = 'basic' | 'skill' | 'passive' | 'dot' | 'reflect';
+
+export interface DamageSourceBreakdown {
+  id: string;
+  name: string;
+  category: DamageSourceCategory;
+  categoryLabel: string;
+  icon: string;
+  colorHex: string;
+  barColor: string; // Tailwind class
+  totalDamage: number;
+  hitCount: number;
+  maxHit: number;
+  percentage: number; // 0 - 100
+}
+
+export interface StageSettlementData {
+  stageNumber: number; // 1 to 12
+  stageName: string;
+  stageSubTitle?: string;
+  bossName: string;
+  totalWaves: number;
+  totalDamageDealt: number;
+  totalDamageTaken: number;
+  totalHealing: number;
+  battleDurationSeconds: number;
+  dps: number;
+  critCount: number;
+  totalAttacks: number;
+  damageSources: DamageSourceBreakdown[];
+  rewards: {
+    gold: number;
+    exp: number;
+    gem?: Gem;
+    equipment?: Equipment;
+  };
+}

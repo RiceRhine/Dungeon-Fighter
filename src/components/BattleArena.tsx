@@ -1,8 +1,34 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { HeroCalculatedStats, Monster, BattleLogEntry, FloatingNumber, Equipment, Gem, StageConfig } from '../types/game';
+import {
+  HeroCalculatedStats,
+  Monster,
+  BattleLogEntry,
+  FloatingNumber,
+  Equipment,
+  Gem,
+  StageConfig,
+  StageSettlementData,
+  DamageSourceBreakdown,
+  DamageSourceCategory,
+} from '../types/game';
 import { PRESET_GEMS, INITIAL_EQUIPMENTS } from '../data/initialData';
-import { Play, Pause, FastForward, RotateCcw, ChevronRight, Trophy, Skull, Zap, Flame, Map, Sparkles } from 'lucide-react';
+import {
+  Play,
+  Pause,
+  FastForward,
+  RotateCcw,
+  ChevronRight,
+  Trophy,
+  Skull,
+  Zap,
+  Flame,
+  Map,
+  Sparkles,
+  BarChart3,
+  Activity,
+} from 'lucide-react';
 import { sounds } from '../services/sound';
+import { StageSettlementModal } from './StageSettlementModal';
 
 interface BattleArenaProps {
   heroStats: HeroCalculatedStats;
@@ -13,6 +39,7 @@ interface BattleArenaProps {
   currentWaveIndex: number;
   onWaveAdvance: (nextWaveIndex: number) => void;
   onStageClear: (clearedStageIndex: number) => void;
+  onSelectStage?: (stageIndex: number) => void;
   onOpenStageSelect: () => void;
   onRewardReceived: (loot: { equipment?: Equipment; gem?: Gem; gold: number; exp: number }) => void;
 }
@@ -26,6 +53,7 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
   currentWaveIndex,
   onWaveAdvance,
   onStageClear,
+  onSelectStage,
   onOpenStageSelect,
   onRewardReceived,
 }) => {
@@ -64,8 +92,17 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
     },
   ]);
 
+  // 🎯 核心需求：關卡結算與各造成傷害來源在總傷的比例追蹤
+  const [damageTracker, setDamageTracker] = useState<Record<string, DamageSourceBreakdown>>({});
+  const [totalDamageTaken, setTotalDamageTaken] = useState(0);
+  const [totalHealing, setTotalHealing] = useState(0);
+  const [stageElapsedTime, setStageElapsedTime] = useState(0);
+  const [critCount, setCritCount] = useState(0);
+  const [totalAttacks, setTotalAttacks] = useState(0);
+
   // Modals
-  const [victoryModalOpen, setVictoryModalOpen] = useState(false);
+  const [settlementModalOpen, setSettlementModalOpen] = useState(false);
+  const [latestSettlement, setLatestSettlement] = useState<StageSettlementData | null>(null);
   const [defeatModalOpen, setDefeatModalOpen] = useState(false);
   const [lastDrops, setLastDrops] = useState<{ equipment?: Equipment; gem?: Gem; gold: number; exp: number } | null>(null);
 
@@ -86,6 +123,99 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
       addLog(`${prefix} 第 ${currentStageIndex + 1} 關 (${currentWaveIndex + 1}/12): ${mon.name} 出現！`, 'system');
     }
   }, [currentStageIndex, currentWaveIndex, stages]);
+
+  // 重置關卡統計（進入新關卡或第 1 波時歸零重計）
+  const resetStageTracker = () => {
+    setDamageTracker({});
+    setTotalDamageTaken(0);
+    setTotalHealing(0);
+    setStageElapsedTime(0);
+    setCritCount(0);
+    setTotalAttacks(0);
+  };
+
+  useEffect(() => {
+    if (currentWaveIndex === 0) {
+      resetStageTracker();
+    }
+  }, [currentStageIndex, currentWaveIndex]);
+
+  // 傷害記錄器：精準紀錄各種傷害來源、次數與單次最高傷害
+  const recordDamage = (
+    sourceId: string,
+    amount: number,
+    meta: {
+      name: string;
+      category: DamageSourceCategory;
+      categoryLabel: string;
+      icon: string;
+      colorHex: string;
+      barColor: string;
+    }
+  ) => {
+    if (amount <= 0) return;
+    setDamageTracker((prev) => {
+      const existing = prev[sourceId] || {
+        id: sourceId,
+        name: meta.name,
+        category: meta.category,
+        categoryLabel: meta.categoryLabel,
+        icon: meta.icon,
+        colorHex: meta.colorHex,
+        barColor: meta.barColor,
+        totalDamage: 0,
+        hitCount: 0,
+        maxHit: 0,
+        percentage: 0,
+      };
+      return {
+        ...prev,
+        [sourceId]: {
+          ...existing,
+          totalDamage: existing.totalDamage + amount,
+          hitCount: existing.hitCount + 1,
+          maxHit: Math.max(existing.maxHit, amount),
+        },
+      };
+    });
+  };
+
+  // 生成通關或即時戰鬥結算報告
+  const generateSettlementData = (drops?: {
+    gold: number;
+    exp: number;
+    gem?: Gem;
+    equipment?: Equipment;
+  }): StageSettlementData => {
+    const sources = Object.values(damageTracker);
+    const totalDmg = sources.reduce((acc, curr) => acc + curr.totalDamage, 0);
+    const duration = Math.max(1, stageElapsedTime);
+    const dps = Math.round(totalDmg / duration);
+
+    const formattedSources: DamageSourceBreakdown[] = sources
+      .map((s) => ({
+        ...s,
+        percentage: totalDmg > 0 ? (s.totalDamage / totalDmg) * 100 : 0,
+      }))
+      .sort((a, b) => b.totalDamage - a.totalDamage);
+
+    return {
+      stageNumber: currentStage.stageNumber,
+      stageName: currentStage.name,
+      stageSubTitle: currentStage.subTitle,
+      bossName: monster.name,
+      totalWaves: 12,
+      totalDamageDealt: totalDmg,
+      totalDamageTaken,
+      totalHealing,
+      battleDurationSeconds: duration,
+      dps,
+      critCount,
+      totalAttacks,
+      damageSources: formattedSources,
+      rewards: drops || lastDrops || { gold: 0, exp: 0 },
+    };
+  };
 
   // Keep logs scrolled to bottom
   useEffect(() => {
@@ -116,11 +246,14 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
 
   // Main Battle Loop
   useEffect(() => {
-    if (!isFighting || victoryModalOpen || defeatModalOpen) return;
+    if (!isFighting || settlementModalOpen || defeatModalOpen) return;
 
     const intervalTime = 60; // 60ms tick
     const timer = setInterval(() => {
       const deltaSec = (intervalTime / 1000) * battleSpeed;
+
+      // 累計戰鬥歷時 (秒)
+      setStageElapsedTime((prev) => prev + deltaSec);
 
       // 1. 更新技能型寶珠冷卻計時器
       setSkillCdMap((prev) => {
@@ -146,6 +279,14 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
         if (burnEffect && Math.random() < 0.25) {
           const burnTick = Math.max(3, Math.round(burnEffect.value * 0.35));
           dotDmg += burnTick;
+          recordDamage('dot_burn', burnTick, {
+            name: '🔥 烈焰灼燒 (DoT)',
+            category: 'dot',
+            categoryLabel: '狀態 DoT',
+            icon: '🔥',
+            colorHex: '#dc2626',
+            barColor: 'bg-red-600',
+          });
           addFloatingText(`-${burnTick} 灼燒`, 'burn', 'monster');
         }
 
@@ -154,6 +295,14 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
         if (poisonEffect && Math.random() < 0.25) {
           const poisonTick = Math.max(3, Math.round(poisonEffect.value * 0.4));
           dotDmg += poisonTick;
+          recordDamage('dot_poison', poisonTick, {
+            name: '☠️ 劇毒滲透 (DoT)',
+            category: 'dot',
+            categoryLabel: '狀態 DoT',
+            icon: '☠️',
+            colorHex: '#10b981',
+            barColor: 'bg-emerald-500',
+          });
           addFloatingText(`-${poisonTick} 劇毒`, 'poison', 'monster');
         }
 
@@ -189,11 +338,11 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
     }, intervalTime);
 
     return () => clearInterval(timer);
-  }, [isFighting, heroStats, currentHp, monster, battleSpeed, victoryModalOpen, defeatModalOpen]);
+  }, [isFighting, heroStats, currentHp, monster, battleSpeed, settlementModalOpen, defeatModalOpen]);
 
   // Check victory / defeat conditions
   useEffect(() => {
-    if (monster.hp <= 0 && isFighting && !victoryModalOpen) {
+    if (monster.hp <= 0 && isFighting && !settlementModalOpen) {
       handleWaveVictory();
     }
   }, [monster.hp, isFighting]);
@@ -212,16 +361,35 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
     setMonsterHurt(true);
     setTimeout(() => setMonsterHurt(false), 200);
 
+    setTotalAttacks((prev) => prev + 1);
+
     const baseDmg = Math.max(5, heroStats.atk - monster.def * 0.4);
     const isCrit = Math.random() < heroStats.critRate;
     let finalDmg = Math.round(baseDmg * (isCrit ? heroStats.critDamage : 1));
 
     if (isCrit) {
+      setCritCount((prev) => prev + 1);
       sounds.playCrit();
+      recordDamage('crit_hit', finalDmg, {
+        name: '💥 致命暴擊傷害',
+        category: 'basic',
+        categoryLabel: '暴擊爆發',
+        icon: '💥',
+        colorHex: '#f59e0b',
+        barColor: 'bg-amber-500',
+      });
       addFloatingText(`暴擊! -${finalDmg}`, 'crit', 'monster');
       addLog(`💥 暴擊！英雄對 ${monster.name} 造成 ${finalDmg} 傷害！`, 'crit');
     } else {
       sounds.playHeroHit();
+      recordDamage('normal_hit', finalDmg, {
+        name: '🗡️ 物理普通揮擊',
+        category: 'basic',
+        categoryLabel: '基礎攻擊',
+        icon: '🗡️',
+        colorHex: '#94a3b8',
+        barColor: 'bg-slate-400',
+      });
       addFloatingText(`-${finalDmg}`, 'damage', 'monster');
       addLog(`🗡️ 英雄揮擊造成 ${finalDmg} 點傷害。`, 'hero');
     }
@@ -233,6 +401,14 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
         if (skill.effectType === 'flame_burst') {
           sounds.playBurn();
           finalDmg += skill.effectValue;
+          recordDamage('skill_flame', skill.effectValue, {
+            name: '🔥 烈焰天劫 (技能)',
+            category: 'skill',
+            categoryLabel: '技能型寶珠',
+            icon: '🔥',
+            colorHex: '#ef4444',
+            barColor: 'bg-red-500',
+          });
           setMonster((prev) => ({
             ...prev,
             statusEffects: [
@@ -246,6 +422,14 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
           sounds.playLightning();
           const zapDmg = Math.round(heroStats.atk * skill.effectValue);
           finalDmg += zapDmg;
+          recordDamage('skill_thunder', zapDmg, {
+            name: '⚡ 毀滅神雷 (技能)',
+            category: 'skill',
+            categoryLabel: '技能型寶珠',
+            icon: '⚡',
+            colorHex: '#eab308',
+            barColor: 'bg-yellow-500',
+          });
           addFloatingText(`⚡神雷 +${zapDmg}`, 'lightning', 'monster');
           addLog(`⚡【毀滅神雷】冷卻完畢必定觸發！轟落九天玄雷重創目標！`, 'gem_effect');
         } else if (skill.effectType === 'time_warp') {
@@ -254,12 +438,29 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
           addLog(`⏳【時空裂隙】冷卻完畢必定觸發！強行截斷清空敵方蓄力條！`, 'gem_effect');
         } else if (skill.effectType === 'holy_judgment') {
           finalDmg += skill.effectValue;
+          recordDamage('skill_holy', skill.effectValue, {
+            name: '✨ 神聖制裁 (技能)',
+            category: 'skill',
+            categoryLabel: '技能型寶珠',
+            icon: '✨',
+            colorHex: '#fbbf24',
+            barColor: 'bg-amber-400',
+          });
           setCurrentHp((prev) => Math.min(heroStats.maxHp, prev + 200));
+          setTotalHealing((prev) => prev + 200);
           addFloatingText(`✨神裁 -${skill.effectValue}`, 'heal', 'monster');
           addFloatingText(`+200 自癒`, 'heal', 'hero');
           addLog(`✨【神聖制裁】冷卻完畢必定觸發！造成真實穿透傷並自癒 200 HP！`, 'gem_effect');
         } else if (skill.effectType === 'arcane_nova') {
           finalDmg += skill.effectValue;
+          recordDamage('skill_arcane', skill.effectValue, {
+            name: '🔮 奧術星爆 (技能)',
+            category: 'skill',
+            categoryLabel: '技能型寶珠',
+            icon: '🔮',
+            colorHex: '#a855f7',
+            barColor: 'bg-purple-500',
+          });
           addFloatingText(`🔮星爆 +${skill.effectValue}`, 'crit', 'monster');
           addLog(`🔮【奧術星爆】冷卻完畢必定觸發！星光貫穿目標防禦造成 ${skill.effectValue} 穿透傷！`, 'gem_effect');
         }
@@ -272,6 +473,14 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
     if (heroStats.passiveDoubleStrikeChance > 0 && Math.random() < heroStats.passiveDoubleStrikeChance) {
       const extraHit = Math.round(finalDmg * 0.8);
       finalDmg += extraHit;
+      recordDamage('passive_double', extraHit, {
+        name: '⚔️ 狂怒連擊 (被動)',
+        category: 'passive',
+        categoryLabel: '被動型寶珠',
+        icon: '⚔️',
+        colorHex: '#f97316',
+        barColor: 'bg-orange-500',
+      });
       addFloatingText(`⚔️連擊 +${extraHit}`, 'damage', 'monster');
       addLog(`⚔️【狂怒連擊】無冷卻概率觸發！追擊造成額外 ${extraHit} 傷害！`, 'gem_effect');
     }
@@ -289,6 +498,14 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
 
     if (heroStats.passiveGroundSlamChance > 0 && Math.random() < heroStats.passiveGroundSlamChance) {
       finalDmg += 120;
+      recordDamage('passive_slam', 120, {
+        name: '💥 裂地震盪 (被動)',
+        category: 'passive',
+        categoryLabel: '被動型寶珠',
+        icon: '💥',
+        colorHex: '#ea580c',
+        barColor: 'bg-orange-600',
+      });
       addFloatingText(`💥震盪 +120`, 'crit', 'monster');
     }
 
@@ -296,6 +513,7 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
       const soulHeal = Math.round(finalDmg * 0.5);
       if (soulHeal > 0) {
         setCurrentHp((prev) => Math.min(heroStats.maxHp, prev + soulHeal));
+        setTotalHealing((prev) => prev + soulHeal);
         addFloatingText(`+${soulHeal} 掠奪`, 'heal', 'hero');
       }
     }
@@ -304,6 +522,7 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
       const baseHeal = Math.round(finalDmg * heroStats.lifesteal);
       if (baseHeal > 0) {
         setCurrentHp((prev) => Math.min(heroStats.maxHp, prev + baseHeal));
+        setTotalHealing((prev) => prev + baseHeal);
         addFloatingText(`+${baseHeal}`, 'heal', 'hero');
       }
     }
@@ -340,6 +559,7 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
     }
 
     sounds.playMonsterHit();
+    setTotalDamageTaken((prev) => prev + reducedDmg);
     addFloatingText(`-${reducedDmg}`, 'damage', 'hero');
     addLog(`👹 ${monster.name} 反擊造成 ${reducedDmg} 傷害！`, 'monster');
 
@@ -348,6 +568,14 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
       const reflected = Math.round(reducedDmg * heroStats.passiveThornsPercent);
       if (reflected > 0) {
         setMonster((prev) => ({ ...prev, hp: Math.max(0, prev.hp - reflected) }));
+        recordDamage('passive_thorns', reflected, {
+          name: '🛡️ 聖光反噬 (荊棘)',
+          category: 'reflect',
+          categoryLabel: '被動型寶珠',
+          icon: '🛡️',
+          colorHex: '#fbbf24',
+          barColor: 'bg-yellow-400',
+        });
         addFloatingText(`反噬 -${reflected}`, 'lightning', 'monster');
         addLog(`🛡️【聖光荊棘】無冷卻概率觸發！反彈 ${reflected} 點反噬傷害！`, 'gem_effect');
       }
@@ -390,11 +618,14 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
     onRewardReceived(drops);
 
     if (isStageFinalBoss) {
-      // 通關第 12 波大首領！
+      // 通關第 12 波大首領！觸發關卡結算
       setIsFighting(false);
       onStageClear(currentStageIndex);
       addLog(`🏆【關卡大勝】擊破 ${monster.name}！第 ${currentStageIndex + 1} 關全部通關！下一關卡已成功解鎖！`, 'defeat');
-      setVictoryModalOpen(true);
+
+      const settlement = generateSettlementData(drops);
+      setLatestSettlement(settlement);
+      setSettlementModalOpen(true);
     } else {
       // 推進下一波敵人 (Wave 1~11)
       addLog(`✨ 擊敗第 ${currentWaveIndex + 1} 波敵人！準備迎戰下一波！`, 'defeat');
@@ -411,17 +642,6 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
     sounds.playDefeat();
     addLog(`💀 英雄倒下了... 可隨時點選【選關畫面】或【變更裝備】強化後再戰！`, 'defeat');
     setDefeatModalOpen(true);
-  };
-
-  const handleProceedNextStage = () => {
-    setVictoryModalOpen(false);
-    if (currentStageIndex < stages.length - 1) {
-      onWaveAdvance(0);
-      setCurrentHp(heroStats.maxHp);
-      if (autoAdvance) {
-        setTimeout(() => setIsFighting(true), 350);
-      }
-    }
   };
 
   const handleReviveAndRetry = () => {
@@ -473,6 +693,20 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={() => {
+              if (!latestSettlement) {
+                setLatestSettlement(generateSettlementData());
+              }
+              setSettlementModalOpen(true);
+            }}
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-bold text-amber-300 border border-slate-700 transition-colors shadow-sm"
+            title="檢視本關各傷害來源輸出明細與佔比"
+          >
+            <BarChart3 className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">傷害結算</span>
+          </button>
+
           <button
             onClick={() => setBattleSpeed((prev) => (prev === 1 ? 2 : 1))}
             className="flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-mono text-slate-300 border border-slate-700 transition-colors"
@@ -684,72 +918,41 @@ export const BattleArena: React.FC<BattleArenaProps> = ({
         </div>
       </div>
 
-      {/* Victory Modal for Stage Clear (12th enemy cleared) */}
-      {victoryModalOpen && lastDrops && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="max-w-md w-full rounded-2xl bg-slate-900 border-2 border-amber-500 p-5 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="text-center mb-3">
-              <Trophy className="w-10 h-10 text-amber-400 mx-auto mb-1 animate-bounce" />
-              <h3 className="text-lg font-black text-amber-300 font-cinzel">
-                第 {currentStageIndex + 1} 關 全通大勝利！
-              </h3>
-              <p className="text-xs text-slate-300">
-                恭喜擊敗關底首領【{monster.name}】，通關本關全部 12 名敵人！
-              </p>
-            </div>
-
-            <div className="space-y-2 mb-4 p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-xs">
-              <div className="flex items-center justify-between text-slate-300">
-                <span>金幣與經驗：</span>
-                <span className="text-amber-400 font-bold font-mono">+{lastDrops.gold} 金幣 / +{lastDrops.exp} EXP</span>
-              </div>
-              {lastDrops.gem && (
-                <div className="p-2 rounded bg-slate-900 border border-slate-700 flex items-center justify-between">
-                  <span className="font-bold text-white">{lastDrops.gem.name}</span>
-                  <span className="text-[10px] text-amber-300 font-medium">已入寶石行囊</span>
-                </div>
-              )}
-              {lastDrops.equipment && (
-                <div className="p-2 rounded bg-slate-900 border border-slate-700 flex items-center justify-between">
-                  <span className="font-bold text-white">{lastDrops.equipment.name}</span>
-                  <span className="text-[10px] text-sky-300 font-medium">已入庫存背包</span>
-                </div>
-              )}
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setVictoryModalOpen(false);
-                    onOpenStageSelect();
-                  }}
-                  className="flex-1 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 transition-colors flex items-center justify-center gap-1.5"
-                >
-                  <Map className="w-3.5 h-3.5" />
-                  <span>開啟選關畫面</span>
-                </button>
-                {currentStageIndex < stages.length - 1 ? (
-                  <button
-                    onClick={handleProceedNextStage}
-                    className="flex-1 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 transition-colors flex items-center justify-center gap-1 shadow-md"
-                  >
-                    <span>前進第 {currentStageIndex + 2} 關</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => setVictoryModalOpen(false)}
-                    className="flex-1 py-2 rounded-xl text-xs font-bold bg-amber-400 text-slate-950"
-                  >
-                    已破通全部12關！
-                  </button>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 🎯 核心需求：關卡通關結算 Modal (顯示各種造成傷害來源與其在總傷的比例) */}
+      <StageSettlementModal
+        isOpen={settlementModalOpen}
+        settlement={latestSettlement || generateSettlementData()}
+        hasNextStage={currentStageIndex < stages.length - 1}
+        onProceedNext={() => {
+          setSettlementModalOpen(false);
+          if (onSelectStage && currentStageIndex < stages.length - 1) {
+            onSelectStage(currentStageIndex + 1);
+          } else {
+            onWaveAdvance(0);
+          }
+          setCurrentHp(heroStats.maxHp);
+          resetStageTracker();
+          if (autoAdvance) {
+            setTimeout(() => setIsFighting(true), 400);
+          }
+        }}
+        onReplayStage={() => {
+          setSettlementModalOpen(false);
+          if (onSelectStage) {
+            onSelectStage(currentStageIndex);
+          } else {
+            onWaveAdvance(0);
+          }
+          setCurrentHp(heroStats.maxHp);
+          resetStageTracker();
+          setTimeout(() => setIsFighting(true), 400);
+        }}
+        onOpenStageSelect={() => {
+          setSettlementModalOpen(false);
+          onOpenStageSelect();
+        }}
+        onClose={() => setSettlementModalOpen(false)}
+      />
 
       {/* Defeat Modal */}
       {defeatModalOpen && (

@@ -178,10 +178,6 @@ export default function App() {
         cleared: sIdx <= clearedStageIndex,
       }))
     );
-    if (clearedStageIndex < 11) {
-      setCurrentStageIndex(clearedStageIndex + 1);
-      setCurrentWaveIndex(0);
-    }
   };
 
   const handleSelectStage = (stageIdx: number) => {
@@ -582,6 +578,7 @@ export default function App() {
             currentWaveIndex={currentWaveIndex}
             onWaveAdvance={handleWaveAdvance}
             onStageClear={handleStageClear}
+            onSelectStage={handleSelectStage}
             onOpenStageSelect={() => setStageSelectModalOpen(true)}
             onRewardReceived={handleRewardReceived}
           />
