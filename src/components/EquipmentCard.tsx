@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Equipment, Gem, EquipmentType } from '../types/game';
 import { GemIcon } from './GemIcon';
 import { getRarityBorder, getRarityBadgeText, getCategoryBadge } from '../utils/calcStats';
@@ -34,8 +34,35 @@ export const EquipmentCard: React.FC<EquipmentCardProps> = ({
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
   const [showTooltip, setShowTooltip] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
+  const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const rarityInfo = getRarityBadgeText(equipment.rarity);
   const borderClasses = getRarityBorder(equipment.rarity);
+
+  const handleMouseEnter = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+      closeTimeoutRef.current = null;
+    }
+    setShowTooltip(true);
+  };
+
+  const handleMouseLeave = () => {
+    if (closeTimeoutRef.current) {
+      clearTimeout(closeTimeoutRef.current);
+    }
+    closeTimeoutRef.current = setTimeout(() => {
+      setShowTooltip(false);
+    }, 280); // 280ms 寬容緩衝時間：確保滑鼠從裝備移動至描述頁時不會消失
+  };
+
+  useEffect(() => {
+    return () => {
+      if (closeTimeoutRef.current) {
+        clearTimeout(closeTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const getEquipmentIcon = () => {
     switch (equipment.iconName) {
@@ -103,8 +130,8 @@ export const EquipmentCard: React.FC<EquipmentCardProps> = ({
 
   return (
     <div
-      onMouseEnter={() => setShowTooltip(true)}
-      onMouseLeave={() => setShowTooltip(false)}
+      onMouseEnter={handleMouseEnter}
+      onMouseLeave={handleMouseLeave}
       className={`relative rounded-2xl border p-3.5 transition-all duration-150 flex flex-col justify-between shadow-md ${borderClasses}`}
     >
       <div>
@@ -197,7 +224,8 @@ export const EquipmentCard: React.FC<EquipmentCardProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          {/* 垂直排列鑲嵌槽 (Vertical Stack Sockets) */}
+          <div className="flex flex-col gap-2">
             {equipment.sockets.map((socketedGem, idx) => {
               const isDragOver = dragOverIndex === idx;
 
@@ -207,16 +235,19 @@ export const EquipmentCard: React.FC<EquipmentCardProps> = ({
                 return (
                   <div
                     key={idx}
-                    className="flex-1 h-9 px-2 rounded-lg bg-slate-950 border border-slate-700/90 flex items-center justify-between gap-1 group/socket hover:border-amber-400/60 transition-colors shadow-inner"
-                    title={`孔位 #${idx + 1} 已鑲嵌寶石（滑鼠懸停裝備可查看詳細特效；點擊 ✕ 拆卸並保留）`}
+                    className="w-full h-10 px-3 rounded-xl bg-slate-950 border border-slate-700/90 flex items-center justify-between group/socket hover:border-amber-400/60 transition-all shadow-inner"
+                    title={`孔位 #${idx + 1} 已鑲嵌寶石（滑鼠懸停裝備卡片可查看詳細特效；點擊右側拆卸並完整保留）`}
                   >
-                    <div className="flex items-center gap-1.5 min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="text-[10px] text-slate-500 font-mono shrink-0">
+                        孔位 #{idx + 1}
+                      </span>
                       {/* 鑲嵌槽常態僅顯示寶石圖示與元素流光，不顯示文字名稱 */}
                       <GemIcon gem={socketedGem} size="sm" />
-                      <span className={`w-1.5 h-1.5 rounded-full ${badge.bg}`} />
+                      <span className={`w-2 h-2 rounded-full ${badge.bg} shadow-sm shrink-0`} />
                     </div>
 
-                    {/* 拆卸按鈕：點擊100%保留返還背包 */}
+                    {/* 拆卸按鈕：點擊100%保留返還行囊 */}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -224,16 +255,17 @@ export const EquipmentCard: React.FC<EquipmentCardProps> = ({
                         onUnsocketGem(equipment.id, idx);
                         sounds.playUnsocket();
                       }}
-                      className="p-1 rounded hover:bg-red-950/70 text-slate-500 hover:text-red-300 transition-colors"
+                      className="px-2 py-1 rounded-md text-[11px] text-slate-400 hover:text-red-300 hover:bg-red-950/70 border border-slate-800 hover:border-red-800/60 transition-colors flex items-center gap-1 shrink-0"
                       title="拆卸此寶石（100% 完整保留回行囊）"
                     >
-                      <X className="w-3.5 h-3.5" />
+                      <X className="w-3.5 h-3.5 text-slate-400 group-hover/socket:text-red-300" />
+                      <span className="text-[10px]">拆卸保留</span>
                     </button>
                   </div>
                 );
               }
 
-              // Empty Socket Slot
+              // Empty Socket Slot (Vertical row)
               return (
                 <div
                   key={idx}
@@ -241,15 +273,25 @@ export const EquipmentCard: React.FC<EquipmentCardProps> = ({
                   onDragLeave={handleDragLeave}
                   onDrop={(e) => handleDrop(e, idx)}
                   onClick={() => onRequestGemPicker && onRequestGemPicker(equipment.id, idx)}
-                  className={`flex-1 h-9 rounded-lg border-2 border-dashed transition-all flex items-center justify-center gap-1 cursor-pointer select-none text-xs ${
+                  className={`w-full h-10 px-3 rounded-xl border-2 border-dashed transition-all flex items-center justify-between cursor-pointer select-none text-xs ${
                     isDragOver
-                      ? 'border-amber-400 bg-amber-950/60 text-amber-200 scale-105 shadow-[0_0_8px_#f59e0b]'
+                      ? 'border-amber-400 bg-amber-950/60 text-amber-200 scale-[1.01] shadow-[0_0_10px_#f59e0b]'
                       : 'border-slate-800 bg-slate-950/40 text-slate-500 hover:border-amber-400/60 hover:text-slate-300'
                   }`}
-                  title="未鑲嵌孔位：可將上方行囊寶石拖曳至此處放開"
+                  title="未鑲嵌孔位：可將上方行囊寶石拖曳至此處放開，或點擊選取"
                 >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span className="text-[10px] font-mono font-medium">{isDragOver ? '放開' : `孔${idx + 1}`}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-full border border-slate-700 shrink-0" />
+                    <span className="font-mono text-slate-400 text-xs">
+                      孔位 #{idx + 1}
+                    </span>
+                    <span className="text-[10px] text-slate-500">(未鑲嵌)</span>
+                  </div>
+
+                  <div className="flex items-center gap-1 text-[11px] text-amber-400 font-medium">
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{isDragOver ? '放開即可鑲嵌' : '拖曳寶石進孔'}</span>
+                  </div>
                 </div>
               );
             })}
@@ -298,7 +340,11 @@ export const EquipmentCard: React.FC<EquipmentCardProps> = ({
 
       {/* 詳細數值與特效收納：滑鼠懸浮時浮動顯示 Tooltip (包含已鑲嵌寶石特效) */}
       {showTooltip && (
-        <div className="absolute left-1/2 bottom-full mb-2 transform -translate-x-1/2 z-50 w-76 sm:w-84 p-3 rounded-xl bg-slate-950/98 border border-amber-500/50 shadow-[0_10px_35px_rgba(0,0,0,0.95)] text-[11px] pointer-events-none animate-in fade-in zoom-in-95 duration-100 backdrop-blur-md">
+        <div
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          className="absolute left-1/2 bottom-full mb-1.5 transform -translate-x-1/2 z-50 w-80 sm:w-88 p-3.5 rounded-2xl bg-slate-950/98 border border-amber-500/60 shadow-[0_15px_40px_rgba(0,0,0,0.98)] text-[11px] pointer-events-auto animate-in fade-in zoom-in-95 duration-100 backdrop-blur-md after:absolute after:-bottom-3 after:left-0 after:right-0 after:h-4 after:content-['']"
+        >
           {/* Header */}
           <div className="font-bold text-white mb-1 flex items-center justify-between pb-1.5 border-b border-slate-800">
             <div className="flex items-center gap-1.5 truncate">
@@ -352,7 +398,7 @@ export const EquipmentCard: React.FC<EquipmentCardProps> = ({
                 </div>
               </div>
             ) : (
-              <div className="space-y-1.5 max-h-56 overflow-y-auto pr-0.5">
+              <div className="space-y-1.5 max-h-64 sm:max-h-72 overflow-y-auto pr-1 select-text">
                 {equipment.sockets.map((gem, idx) => {
                   if (!gem) return null;
                   const badge = getCategoryBadge(gem.category);
