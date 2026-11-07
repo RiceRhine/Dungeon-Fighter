@@ -1,0 +1,6 @@
+{
+  "name": "GemForge Auto-Battler: 寶石鑲嵌自動戰鬥",
+  "description": "HTML5 自動戰鬥 RPG 遊戲，核心特色為裝備自由更換與寶石拖曳鑲嵌系統，組合專屬元素效果征服地下城怪物。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
